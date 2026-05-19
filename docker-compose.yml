@@ -1,15 +1,17 @@
 # ─────────────────────────────────────────────────────────────
 # n8n SMB Agent Template — Docker Compose
 # ─────────────────────────────────────────────────────────────
-# Compatible with: Docker Desktop, OrbStack (macOS), Podman
-# Production-ready for Hostinger VPS and local development.
+# Compatible: Docker Desktop, OrbStack (macOS), Podman
+# Targets:    Local dev (OrbStack) + Hostinger VPS (production)
 #
-# OrbStack users: extra_hosts already configured for
-# host.docker.internal → host-gateway (for local Ollama).
-# No additional config needed — just `docker compose up -d`.
+# Quick start:
+#   1. cp .env.example .env   (edit values)
+#   2. docker compose up -d
+#   3. Open http://localhost:5678
 #
-# Image versioning: set N8N_VERSION in .env to pin (e.g. 1.91.0).
-# Omit or set to "latest" for local dev.
+# Image versioning:
+#   Set N8N_VERSION in .env to pin (e.g. 1.91.0).
+#   Omit or set to "latest" for local dev.
 # ─────────────────────────────────────────────────────────────
 
 version: "3.9"
@@ -29,14 +31,21 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
       POSTGRES_DB: ${DB_NAME:-n8n}
     volumes:
-      # On VPS: back up this volume regularly.
-      # docker run --rm -v ${COMPOSE_PROJECT_NAME:-n8n-smb}_postgres_data:/data -v $(pwd):/backup alpine tar czf /backup/postgres-backup.tar.gz -C /data .
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-n8n} -d ${DB_NAME:-n8n}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    # ── Production resource limits (uncomment for VPS) ──
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: "1.0"
+    #       memory: 512M
+    #     reservations:
+    #       cpus: "0.25"
+    #       memory: 256M
     networks:
       - n8n_net
 
@@ -57,6 +66,15 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # ── Production resource limits (uncomment for VPS) ──
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: "0.5"
+    #       memory: 256M
+    #     reservations:
+    #       cpus: "0.1"
+    #       memory: 128M
     networks:
       - n8n_net
 
@@ -98,7 +116,7 @@ services:
       - QUEUE_BULL_REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
       - QUEUE_BULL_REDIS_DB=0
       - EXECUTIONS_MODE=queue
-      # ── Execution Data Retention ──
+      # ── Data Retention ──
       - EXECUTIONS_DATA_SAVE_ON_ERROR=all
       - EXECUTIONS_DATA_SAVE_ON_SUCCESS=all
       - EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS=true
@@ -111,7 +129,7 @@ services:
       # ── Region ──
       - N8N_EDITOR_LICENSE_NOTIFICATIONS_ENABLED=false
       - GENERIC_TIMEZONE=${TZ:-Australia/Sydney}
-      # ── Client / Branding ──
+      # ── Client ──
       - CLIENT_ID=${CLIENT_ID:-default}
       - CLIENT_NAME=${CLIENT_NAME:-Default Client}
       - CLIENT_LOCATION=${CLIENT_LOCATION:-Australia}
@@ -147,7 +165,7 @@ services:
       - GOOGLE_SHEETS_PRIVATE_KEY=${GOOGLE_SHEETS_PRIVATE_KEY}
       - LOG_SPREADSHEET_ID=${LOG_SPREADSHEET_ID}
       - LOG_SHEET_NAME=${LOG_SHEET_NAME:-ExecutionLog}
-      # ── Hostinger / VPS ──
+      # ── VPS ──
       - SERVER_IP=${SERVER_IP}
       - DOMAIN=${DOMAIN}
     volumes:
@@ -162,25 +180,43 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        restart: true
       redis:
         condition: service_healthy
+        restart: true
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # ── Production resource limits (uncomment for VPS) ──
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: "2.0"
+    #       memory: 2048M
+    #     reservations:
+    #       cpus: "0.5"
+    #       memory: 512M
     networks:
       - n8n_net
-    # ── Traefik v2 labels — uncomment for reverse-proxy on Hostinger VPS
+    # ── Reverse proxy labels — uncomment ONE section below
+
+    # ── Option 1: Traefik v2 ──────────────────────────
     # labels:
     #   - "traefik.enable=true"
     #   - "traefik.docker.network=n8n_net"
     #   - "traefik.http.routers.n8n.rule=Host(`${N8N_HOST}`)"
     #   - "traefik.http.routers.n8n.entrypoints=websecure"
     #   - "traefik.http.routers.n8n.tls.certresolver=letsencrypt"
-    #   - "traefik.http.routers.n8n.middlewares=n8n-headers"
+    #   - "traefik.http.routers.n8n.middlewares=n8n-headers@docker"
     #   - "traefik.http.middlewares.n8n-headers.headers.customrequestheaders.X-Frame-Options=DENY"
     #   - "traefik.http.services.n8n.loadbalancer.server.port=5678"
     #   - "traefik.http.services.n8n.loadbalancer.healthcheck.path=/healthz"
     #   - "traefik.http.services.n8n.loadbalancer.healthcheck.interval=30s"
-    #   - "com.centurylinklabs.watchtower.enable=true"
+
+    # ── Option 2: Caddy (run separately — see HOSTINGER-DEPLOY.md Step 7)
+    # Caddyfile example:
+    #   n8n.yourdomain.com {
+    #       reverse_proxy localhost:5678
+    #   }
 
   # ─── n8n Worker (queue mode) ──────────────────────────
   n8n-worker:
@@ -208,7 +244,7 @@ services:
       - QUEUE_BULL_REDIS_DB=0
       - EXECUTIONS_MODE=queue
       - GENERIC_TIMEZONE=${TZ:-Australia/Sydney}
-      # Worker needs all client/LLM vars for API calls
+      # Worker needs all client/LLM vars for HTTP requests
       - CLIENT_ID=${CLIENT_ID:-default}
       - BRAND_VOICE=${BRAND_VOICE:-professional and friendly}
       - META_APP_ID=${META_APP_ID}
@@ -242,10 +278,21 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        restart: true
       redis:
         condition: service_healthy
+        restart: true
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # ── Production resource limits (uncomment for VPS) ──
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: "2.0"
+    #       memory: 2048M
+    #     reservations:
+    #       cpus: "0.5"
+    #       memory: 256M
     networks:
       - n8n_net
 
