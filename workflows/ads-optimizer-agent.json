@@ -1,0 +1,409 @@
+{
+  "name": "Ads Optimizer Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "intervalSize": 1,
+          "typeInterval": "days",
+          "intervalTrigger": {
+            "timezone": "={{ $env.TZ || 'Australia/Sydney' }}",
+            "hour": 8
+          }
+        }
+      },
+      "id": "e4a5f6a7-b8c9-0123-defa-123456780001",
+      "name": "Daily Schedule (8AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.facebook.com/v20.0/{{ $env.META_AD_ACCOUNT_ID || 'act_12345' }}/insights",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{ $env.META_SYSTEM_USER_TOKEN }}"
+            },
+            {
+              "name": "date_preset",
+              "value": "last_7d"
+            },
+            {
+              "name": "level",
+              "value": "ad"
+            },
+            {
+              "name": "fields",
+              "value": "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,impressions,clicks,spend,reach,cpm,cpc,ctr,actions,action_values,cost_per_action_type,conversions"
+            },
+            {
+              "name": "limit",
+              "value": "50"
+            },
+            {
+              "name": "time_increment",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "e4a5f6a7-b8c9-0123-defa-123456780002",
+      "name": "Fetch Ad Insights",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Analyze ad performance and detect optimization opportunities\nconst insights = $input.first().json.data || [];\n\nif (insights.length === 0) {\n  return { status: 'no_data', message: 'No ad insights available for analysis.' };\n}\n\nconst analysis = [];\nlet totalSpend = 0;\nlet totalImpressions = 0;\nlet totalClicks = 0;\n\nfor (const ad of insights) {\n  const spend = parseFloat(ad.spend) || 0;\n  const impressions = parseInt(ad.impressions) || 0;\n  const clicks = parseInt(ad.clicks) || 0;\n  const cpc = parseFloat(ad.cpc) || 0;\n  const ctr = parseFloat(ad.ctr) || 0;\n  const cpm = parseFloat(ad.cpm) || 0;\n  const conversions = parseInt(ad.conversions) || 0;\n  const costPerConversion = ad.cost_per_action_type?.[0]?.value || null;\n\n  totalSpend += spend;\n  totalImpressions += impressions;\n  totalClicks += clicks;\n\n  const issues = [];\n\n  // High CPC alert\n  if (cpc > 2.0) {\n    issues.push(`High CPC: $${cpc.toFixed(2)} (target < $2.00)`);\n  }\n\n  // Low CTR alert\n  if (ctr < 1.0 && impressions > 1000) {\n    issues.push(`Low CTR: ${ctr.toFixed(2)}% (target > 1%)`);\n  }\n\n  // High spend with no conversions\n  if (spend > 50 && conversions === 0) {\n    issues.push(`High spend ($${spend.toFixed(0)}) with zero conversions`);\n  }\n\n  // High CPM\n  if (cpm > 20) {\n    issues.push(`High CPM: $${cpm.toFixed(2)} (target < $20)`);\n  }\n\n  analysis.push({\n    ad_id: ad.ad_id,\n    ad_name: ad.ad_name || 'Unnamed Ad',\n    adset_name: ad.adset_name || 'Unknown',\n    campaign_name: ad.campaign_name || 'Unknown',\n    spend: spend,\n    impressions: impressions,\n    clicks: clicks,\n    cpc: cpc,\n    ctr: ctr,\n    cpm: cpm,\n    conversions: conversions,\n    cost_per_conversion: costPerConversion,\n    issues: issues,\n    needs_attention: issues.length > 0\n  });\n}\n\nconst avgCpc = totalClicks > 0 ? totalSpend / totalClicks : 0;\nconst avgCtr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;\n\nreturn {\n  report_period: 'Last 7 days',\n  ads_analyzed: insights.length,\n  total_spend: Math.round(totalSpend * 100) / 100,\n  total_impressions: totalImpressions,\n  total_clicks: totalClicks,\n  avg_cpc: Math.round(avgCpc * 100) / 100,\n  avg_ctr: Math.round(avgCtr * 100) / 100,\n  ads_need_attention: analysis.filter(a => a.needs_attention).length,\n  ad_details: analysis.filter(a => a.needs_attention),\n  client_id: $env.CLIENT_ID || 'unknown'\n};"
+      },
+      "id": "e4a5f6a7-b8c9-0123-defa-123456780003",
+      "name": "Analyze Ad Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "tryToParseNumbers": true
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.ads_need_attention }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      },
+      "id": "e4a5f6a7-b8c9-0123-defa-123456780004",
+      "name": "Any Issues Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build optimization prompt for the LLM router\nconst data = $input.first().json;\nconst brandVoice = $env.BRAND_VOICE || 'professional';\n\nlet adDetails = '';\nfor (const ad of data.ad_details) {\n  adDetails += `\\n- Ad: \"${ad.ad_name}\" (Campaign: ${ad.campaign_name}, AdSet: ${ad.adset_name})\\n`;\n  adDetails += `  Spend: $${ad.spend.toFixed(2)} | Impressions: ${ad.impressions} | Clicks: ${ad.clicks} | CPC: $${ad.cpc.toFixed(2)} | CTR: ${ad.ctr.toFixed(2)}%\\n`;\n  adDetails += `  Issues: ${ad.issues.join('; ')}\\n`;\n}\n\nconst prompt = `You are a Meta Ads optimization expert for ${$env.CLIENT_NAME || 'a client'}. Brand voice: ${brandVoice}.\n\nAd Performance Report (Last 7 Days):\n- Total Spend: $${data.total_spend}\n- Total Impressions: ${data.total_impressions}\n- Total Clicks: ${data.total_clicks}\n- Average CPC: $${data.avg_cpc}\n- Average CTR: ${data.avg_ctr}%\n- Ads Needing Attention: ${data.ads_need_attention} out of ${data.ads_analyzed}\n\nProblematic Ads:\n${adDetails}\n\nProvide 3 actionable, specific optimization recommendations. Consider:\n1. Budget reallocation suggestions\n2. Creative/targeting improvements\n3. Bid strategy adjustments\n\nIMPORTANT: Do NOT suggest changes that would increase spend beyond 20% of current levels. Always include a risk assessment.\n\nRespond in JSON format:\n{\n  \"summary\": \"Brief overall assessment\",\n  \"recommendations\": [\n    {\n      \"ad_id\": \"ad id\",\n      \"action\": \"specific action to take\",\n      \"expected_impact\": \"what improvement to expect\",\n      \"risk_level\": \"low/medium/high\"\n    }\n  ],\n  \"budget_adjustments\": [\n    {\n      \"ad_id\": \"target ad\",\n      \"current_daily_budget\": 0,\n      \"suggested_daily_budget\": 0,\n      \"rationale\": \"why\"\n    }\n  ]\n}`;\n\nreturn {\n  task_type: 'analysis',\n  user_message: prompt,\n  context: `Meta Ads optimization for ad account ${$env.META_AD_ACCOUNT_ID || 'N/A'}. Client: ${$env.CLIENT_ID}.`\n};"
+      },
+      "id": "e4a5f6a7-b8c9-0123-defa-123456780005",
+      "name": "Build Optimization Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 200]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "PLACEHOLDER_LLM_ROUTER_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "e4a5f6a7-b8c9-0123-defa-123456780006",
+      "name": "Call LLM Router",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1250, 200]
+    },
+    {
+      "parameters": {
+        "resume": "webhook",
+        "options": {
+          "webhookSuffix": "ads-approval-{{ $now.format('YYYY-MM-DD') }}"
+        }
+      },
+      "id": "e4a5f6a7-b8c9-0123-defa-123456780007",
+      "name": "Wait for Human Approval",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1450, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Apply only the approved changes flagged by human\n// The human-in-the-loop response should come back via webhook with approved actions\nconst approvalData = $input.first().json;\nconst approvedActions = approvalData.approved_actions || [];\n\nif (approvedActions.length === 0) {\n  return { status: 'no_actions_approved', message: 'No actions were approved by the reviewer.' };\n}\n\nreturn {\n  status: 'approved',\n  actions_count: approvedActions.length,\n  approved_actions: approvedActions,\n  applied_at: new Date().toISOString(),\n  client_id: $env.CLIENT_ID\n};"
+      },
+      "id": "e4a5f6a7-b8c9-0123-defa-123456780008",
+      "name": "Process Approval",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{ $json.approved_actions[0].ad_id }}/adcreatives",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{ $env.META_SYSTEM_USER_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"name\": \"Optimized {{ $now.format('YYYY-MM-DD') }}\"\n}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "retryOnFail": {
+            "maxTries": 2,
+            "waitBetweenTries": 3000
+          }
+        }
+      },
+      "id": "e4a5f6a7-b8c9-0123-defa-123456780009",
+      "name": "Apply Ad Changes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1850, 200]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.LOG_SPREADSHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $env.LOG_SHEET_NAME || 'ExecutionLog' }}",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "schema": [
+            {
+              "id": "col-ts",
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}"
+            },
+            {
+              "id": "col-client",
+              "name": "client_id",
+              "value": "={{ $env.CLIENT_ID }}"
+            },
+            {
+              "id": "col-wf",
+              "name": "workflow",
+              "value": "ads-optimizer"
+            },
+            {
+              "id": "col-action",
+              "name": "action",
+              "value": "={{ $json.status }}"
+            },
+            {
+              "id": "col-recommendations",
+              "name": "ai_recommendations",
+              "value": "={{ $('Call LLM Router').item.json.response }}"
+            },
+            {
+              "id": "col-provider",
+              "name": "llm_provider",
+              "value": "={{ $('Call LLM Router').item.json.provider }}"
+            },
+            {
+              "id": "col-spend",
+              "name": "total_spend",
+              "value": "={{ $('Analyze Ad Metrics').item.json.total_spend }}"
+            },
+            {
+              "id": "col-status",
+              "name": "status",
+              "value": "={{ $json.error ? 'failed' : 'completed' }}"
+            }
+          ]
+        }
+      },
+      "id": "e4a5f6a7-b8c9-0123-defa-123456780010",
+      "name": "Log to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.9,
+      "position": [2050, 200]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "all_healthy"
+            },
+            {
+              "name": "message",
+              "value": "No ad performance issues detected. All ads within target metrics."
+            }
+          ]
+        }
+      },
+      "id": "e4a5f6a7-b8c9-0123-defa-123456780011",
+      "name": "No Issues - Healthy",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1050, 450]
+    }
+  ],
+  "connections": {
+    "Daily Schedule (8AM)": {
+      "main": [
+        [
+          {
+            "node": "Fetch Ad Insights",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Ad Insights": {
+      "main": [
+        [
+          {
+            "node": "Analyze Ad Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Ad Metrics": {
+      "main": [
+        [
+          {
+            "node": "Any Issues Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Issues Found?": {
+      "main": [
+        [
+          {
+            "node": "Build Optimization Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Issues - Healthy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Optimization Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call LLM Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call LLM Router": {
+      "main": [
+        [
+          {
+            "node": "Wait for Human Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Human Approval": {
+      "main": [
+        [
+          {
+            "node": "Process Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Approval": {
+      "main": [
+        [
+          {
+            "node": "Apply Ad Changes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Ad Changes": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Issues - Healthy": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "saveExecutionProgress": true,
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "versionId": "1.0.0",
+  "active": false
+}

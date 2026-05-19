@@ -1,0 +1,465 @@
+{
+  "name": "LLM Router Sub-Workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "b1a2c3d4-e5f6-7890-abcd-ef1234560001",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1b2c3d4-0001-4000-8000-000000001001",
+              "name": "task_type",
+              "value": "={{ $json.task_type }}",
+              "type": "string"
+            },
+            {
+              "id": "a1b2c3d4-0001-4000-8000-000000001002",
+              "name": "user_message",
+              "value": "={{ $json.user_message }}",
+              "type": "string"
+            },
+            {
+              "id": "a1b2c3d4-0001-4000-8000-000000001003",
+              "name": "context",
+              "value": "={{ $json.context || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "a1b2c3d4-0001-4000-8000-000000001004",
+              "name": "brand_voice",
+              "value": "={{ $env.BRAND_VOICE || 'professional and friendly' }}",
+              "type": "string"
+            },
+            {
+              "id": "a1b2c3d4-0001-4000-8000-000000001005",
+              "name": "client_id",
+              "value": "={{ $env.CLIENT_ID || 'unknown' }}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "b1a2c3d4-e5f6-7890-abcd-ef1234560002",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build system prompt with brand voice injection\nconst brandVoice = $input.first().json.brand_voice;\nconst context = $input.first().json.context;\nconst userMessage = $input.first().json.user_message;\n\nconst systemPrompt = `You are a helpful assistant for ${$env.CLIENT_NAME || 'our client'}. Brand voice: ${brandVoice}. Be concise, accurate, and match the brand voice exactly. Do not make up information. If unsure, say so.`;\n\nconst fullPrompt = context \n  ? `${systemPrompt}\\n\\nContext: ${context}\\n\\nUser: ${userMessage}\\n\\nAssistant:`\n  : `${systemPrompt}\\n\\nUser: ${userMessage}\\n\\nAssistant:`;\n\nreturn {\n  system_prompt: systemPrompt,\n  full_prompt: fullPrompt,\n  user_message: userMessage,\n  task_type: $input.first().json.task_type,\n  brand_voice: brandVoice,\n  client_id: $input.first().json.client_id\n};"
+      },
+      "id": "b1a2c3d4-e5f6-7890-abcd-ef1234560003",
+      "name": "Build Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.task_type }}",
+        "rules": {
+          "rules": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.task_type }}",
+                    "rightValue": "routine",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.task_type }}",
+                    "rightValue": "analysis",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "fallbackOutput": "extra"
+      },
+      "id": "b1a2c3d4-e5f6-7890-abcd-ef1234560004",
+      "name": "Route by Task Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.OLLAMA_BASE_URL || 'http://host.docker.internal:11434' }}/api/generate",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"model\": \"llama3.2:latest\",\n  \"prompt\": \"{{ $json.full_prompt }}\",\n  \"stream\": false,\n  \"options\": {\n    \"temperature\": 0.7,\n    \"num_predict\": 1024\n  }\n}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "retryOnFail": {
+            "maxTries": 2,
+            "waitBetweenTries": 2000
+          }
+        }
+      },
+      "id": "b1a2c3d4-e5f6-7890-abcd-ef1234560010",
+      "name": "Ollama (Routine)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1050, 50]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SILICONFLOW_BASE_URL || 'https://api.siliconflow.cn/v1' }}/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"model\": \"Qwen/Qwen2.5-7B-Instruct\",\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"{{ $json.system_prompt }}\"},\n    {\"role\": \"user\", \"content\": \"{{ $json.user_message }}\"}\n  ],\n  \"temperature\": 0.7,\n  \"max_tokens\": 1024\n}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "retryOnFail": {
+            "maxTries": 2,
+            "waitBetweenTries": 2000
+          }
+        }
+      },
+      "id": "b1a2c3d4-e5f6-7890-abcd-ef1234560011",
+      "name": "SiliconFlow (Routine)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1050, 230]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SILICONFLOW_BASE_URL || 'https://api.siliconflow.cn/v1' }}/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"model\": \"deepseek-ai/DeepSeek-V3\",\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"{{ $json.system_prompt }}\"},\n    {\"role\": \"user\", \"content\": \"{{ $json.user_message }}\"}\n  ],\n  \"temperature\": 0.6,\n  \"max_tokens\": 4096\n}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "retryOnFail": {
+            "maxTries": 2,
+            "waitBetweenTries": 2000
+          }
+        }
+      },
+      "id": "b1a2c3d4-e5f6-7890-abcd-ef1234560020",
+      "name": "Claude (Complex)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1050, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.GROK_BASE_URL || 'https://api.x.ai/v1' }}/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"model\": \"grok-2-latest\",\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"{{ $json.system_prompt }}\"},\n    {\"role\": \"user\", \"content\": \"{{ $json.user_message }}\"}\n  ],\n  \"temperature\": 0.7,\n  \"max_tokens\": 2048\n}",
+        "options": {
+          "timeout": 90000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "retryOnFail": {
+            "maxTries": 2,
+            "waitBetweenTries": 2000
+          }
+        }
+      },
+      "id": "b1a2c3d4-e5f6-7890-abcd-ef1234560030",
+      "name": "Grok (Fallback)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1050, 720]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine which LLM provided the response and normalize\nconst items = $input.all();\n\nfor (const item of items) {\n  let responseText = '';\n  let provider = 'unknown';\n  let model = 'unknown';\n  let tokensUsed = 0;\n  let costEstimate = 0;\n\n  // Ollama response format\n  if (item.json.response) {\n    provider = 'ollama';\n    model = 'llama3.2';\n    responseText = item.json.response;\n    tokensUsed = (item.json.eval_count || 0) + (item.json.prompt_eval_count || 0);\n    costEstimate = 0;\n  }\n  // OpenAI-compatible response format (SiliconFlow, Grok, OpenAI)\n  else if (item.json.choices && item.json.choices.length > 0) {\n    if (item.json.model && item.json.model.includes('grok')) {\n      provider = 'grok';\n      model = item.json.model;\n    } else if (item.json.model && item.json.model.includes('Qwen')) {\n      provider = 'siliconflow';\n      model = item.json.model;\n    } else if (item.json.model && item.json.model.includes('deepseek')) {\n      provider = 'siliconflow';\n      model = item.json.model;\n    } else {\n      provider = 'openai-compatible';\n      model = item.json.model || 'unknown';\n    }\n    responseText = item.json.choices[0].message.content;\n    tokensUsed = item.json.usage ? item.json.usage.total_tokens : 0;\n    \n    // Rough cost estimates per 1K tokens\n    if (provider === 'siliconflow') {\n      costEstimate = (tokensUsed / 1000) * 0.0014; // ~$0.0014/1K for DeepSeek-V3\n    } else if (provider === 'grok') {\n      costEstimate = (tokensUsed / 1000) * 0.003; // ~$0.003/1K\n    }\n  }\n  // Anthropic Claude response format\n  else if (item.json.content && Array.isArray(item.json.content)) {\n    provider = 'anthropic';\n    model = item.json.model || 'claude';\n    responseText = item.json.content[0].text || item.json.content[0].value || '';\n    tokensUsed = (item.json.usage?.input_tokens || 0) + (item.json.usage?.output_tokens || 0);\n    costEstimate = (tokensUsed / 1000) * 0.015; // ~$0.015/1K for Claude 3.5 Sonnet\n  }\n  // Error response\n  else if (item.json.error) {\n    responseText = `[Error from ${item.json._provider || 'LLM'}: ${item.json.error.message || item.json.error}]`;\n    provider = 'error';\n  }\n  // Unknown format - string response\n  else if (typeof item.json === 'string') {\n    responseText = item.json;\n    provider = 'unknown-string';\n  }\n\n  item.json = {\n    success: responseText.length > 0 && !responseText.startsWith('[Error'),\n    provider: provider,\n    model: model,\n    response: responseText,\n    tokens_used: tokensUsed,\n    cost_estimate: costEstimate,\n    task_type: item.json.task_type || $('Parse Input').item.json.task_type,\n    client_id: $('Parse Input').item.json.client_id\n  };\n}\n\nreturn items;"
+      },
+      "id": "b1a2c3d4-e5f6-7890-abcd-ef1234560040",
+      "name": "Normalize Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "empty"
+      },
+      "id": "b1a2c3d4-e5f6-7890-abcd-ef1234560090",
+      "name": "No Matching Route",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1.1,
+      "position": [1050, 900]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "success",
+              "value": "false"
+            },
+            {
+              "name": "provider",
+              "value": "no-match"
+            },
+            {
+              "name": "response",
+              "value": "={{ 'No LLM route matched for task_type: ' + ($json.task_type || 'unknown') }}"
+            },
+            {
+              "name": "task_type",
+              "value": "={{ $json.task_type }}"
+            },
+            {
+              "name": "client_id",
+              "value": "={{ $env.CLIENT_ID }}"
+            }
+          ]
+        }
+      },
+      "id": "b1a2c3d4-e5f6-7890-abcd-ef1234560091",
+      "name": "Fallback Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1250, 900]
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Input": {
+      "main": [
+        [
+          {
+            "node": "Build Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prompt": {
+      "main": [
+        [
+          {
+            "node": "Route by Task Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Task Type": {
+      "main": [
+        [
+          {
+            "node": "Ollama (Routine)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "SiliconFlow (Routine)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Claude (Complex)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Matching Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama (Routine)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SiliconFlow (Routine)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude (Complex)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Grok (Fallback)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Matching Route": {
+      "main": [
+        [
+          {
+            "node": "Fallback Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fallback Response": {
+      "main": [
+        [
+          {
+            "node": "Normalize Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner",
+    "executionOrder": "v1",
+    "saveExecutionProgress": true
+  },
+  "staticData": null,
+  "pinData": {},
+  "versionId": "1.0.0",
+  "active": false
+}

@@ -1,0 +1,402 @@
+{
+  "name": "Squarespace SEO Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "intervalSize": 1,
+          "typeInterval": "weeks",
+          "intervalTrigger": {
+            "timezone": "={{ $env.TZ || 'Australia/Sydney' }}",
+            "hour": 3,
+            "dayOfWeek": 1
+          }
+        }
+      },
+      "id": "f5a6b7c8-d9e0-1234-fedc-123456780001",
+      "name": "Weekly Schedule (Mon 3AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.squarespace.com/1.0/sites/{{ $env.SQUARESPACE_SITE_ID }}/pages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SQUARESPACE_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "f5a6b7c8-d9e0-1234-fedc-123456780002",
+      "name": "Fetch Squarespace Pages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Analyze SEO health of Squarespace pages\nconst data = $input.first().json;\nconst pages = data.pages || data.result || [];\n\nconst seoReport = [];\n\nfor (const page of pages) {\n  const title = page.title || page.pageName || 'Untitled';\n  const url = page.fullUrl || page.url || 'unknown';\n  const seoDescription = page.seoData?.seoDescription || '';\n  const seoTitle = page.seoData?.seoTitle || title;\n  \n  const issues = [];\n  let score = 100;\n\n  // Check SEO title length (optimal 50-60 chars)\n  if (!seoTitle || seoTitle.length < 30) {\n    issues.push('SEO title too short (< 30 chars)');\n    score -= 15;\n  } else if (seoTitle.length > 65) {\n    issues.push('SEO title too long (> 65 chars, may truncate in SERPs)');\n    score -= 10;\n  }\n\n  // Check meta description\n  if (!seoDescription) {\n    issues.push('Missing meta description');\n    score -= 20;\n  } else if (seoDescription.length < 70) {\n    issues.push('Meta description too short (< 70 chars)');\n    score -= 10;\n  } else if (seoDescription.length > 160) {\n    issues.push('Meta description too long (> 160 chars, may truncate)');\n    score -= 5;\n  }\n\n  // Check for basic keywords in title\n  const keyPhrases = ['service', 'location', 'contact', 'about', 'pricing'];\n  let keywordCount = 0;\n  for (const phrase of keyPhrases) {\n    if ((title + seoDescription).toLowerCase().includes(phrase)) {\n      keywordCount++;\n    }\n  }\n  if (keywordCount < 2) {\n    issues.push('Low keyword diversity — consider adding location/service terms');\n    score -= 10;\n  }\n\n  // Slug quality check\n  if (url && url.length > 75) {\n    issues.push('URL slug too long (> 75 chars)');\n    score -= 5;\n  }\n\n  seoReport.push({\n    page_id: page.id || 'unknown',\n    title: title,\n    url: url,\n    seo_title: seoTitle,\n    seo_description: seoDescription,\n    seo_score: Math.max(0, score),\n    issues: issues,\n    needs_optimization: issues.length > 0\n  });\n}\n\nconst pagesNeedingWork = seoReport.filter(p => p.needs_optimization);\nconst avgScore = seoReport.length > 0 \n  ? Math.round(seoReport.reduce((sum, p) => sum + p.seo_score, 0) / seoReport.length) \n  : 100;\n\nreturn {\n  pages_analyzed: seoReport.length,\n  average_seo_score: avgScore,\n  pages_needing_optimization: pagesNeedingWork.length,\n  page_details: pagesNeedingWork,\n  all_pages: seoReport,\n  client_id: $env.CLIENT_ID || 'unknown',\n  site_id: $env.SQUARESPACE_SITE_ID || 'unknown'\n};"
+      },
+      "id": "f5a6b7c8-d9e0-1234-fedc-123456780003",
+      "name": "Analyze SEO Health",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "tryToParseNumbers": true
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.pages_needing_optimization }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      },
+      "id": "f5a6b7c8-d9e0-1234-fedc-123456780004",
+      "name": "Optimization Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build SEO optimization prompt\nconst data = $input.first().json;\nconst clientName = $env.CLIENT_NAME || 'our client';\nconst businessType = $env.CLIENT_BUSINESS_TYPE || 'small business';\nconst location = $env.CLIENT_LOCATION || 'Australia';\n\nlet pageDetailsText = '';\nfor (const page of data.page_details.slice(0, 10)) {\n  pageDetailsText += `\\n- Page: \"${page.title}\" (${page.url})\\n`;\n  pageDetailsText += `  Current SEO Title: \"${page.seo_title}\"\\n`;\n  pageDetailsText += `  Current Meta: \"${page.seo_description}\"\\n`;\n  pageDetailsText += `  Score: ${page.seo_score}/100\\n`;\n  pageDetailsText += `  Issues: ${page.issues.join('; ')}\\n`;\n}\n\nconst prompt = `You are an SEO specialist for Squarespace websites. Client: ${clientName}, a ${businessType} based in ${location}.\n\nSquarespace SEO Audit Results:\n- Pages Analyzed: ${data.pages_analyzed}\n- Average SEO Score: ${data.average_seo_score}/100\n- Pages Needing Optimization: ${data.pages_needing_optimization}\n\nProblem Pages:\n${pageDetailsText}\n\nProvide optimization recommendations:\n1. For each page, write an improved SEO title (50-60 chars) and meta description (120-155 chars) that:\n   - Includes relevant keywords naturally\n   - Mentions the business location for local SEO\n   - Has a clear call to action\n   - Is unique across all pages\n2. Suggest any URL slug improvements (keep short, descriptive, hyphenated)\n3. Recommend internal linking opportunities between these pages\n\nRespond in JSON format:\n{\n  \"overall_assessment\": \"summary\",\n  \"page_recommendations\": [\n    {\n      \"page_id\": \"id\",\n      \"page_title\": \"title\",\n      \"improved_seo_title\": \"new title\",\n      \"improved_meta_description\": \"new description\",\n      \"suggested_slug\": \"if change needed\",\n      \"priority\": \"high/medium/low\"\n    }\n  ],\n  \"local_seo_tips\": [\"tip1\", \"tip2\"],\n  \"internal_linking_suggestions\": [\"suggestion1\"]\n}`;\n\nreturn {\n  task_type: 'analysis',\n  user_message: prompt,\n  context: `Squarespace SEO audit for ${clientName}. Site ID: ${$env.SQUARESPACE_SITE_ID}`\n};"
+      },
+      "id": "f5a6b7c8-d9e0-1234-fedc-123456780005",
+      "name": "Build SEO Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 200]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "PLACEHOLDER_LLM_ROUTER_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "f5a6b7c8-d9e0-1234-fedc-123456780006",
+      "name": "Call LLM Router",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1250, 200]
+    },
+    {
+      "parameters": {
+        "resume": "webhook",
+        "options": {
+          "webhookSuffix": "seo-approval-{{ $now.format('YYYY-WW') }}"
+        }
+      },
+      "id": "f5a6b7c8-d9e0-1234-fedc-123456780007",
+      "name": "Wait for Human Approval",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1450, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process approved SEO changes and apply to Squarespace\n// Squarespace API: PUT /1.0/sites/{site_id}/pages/{page_id}\nconst approval = $input.first().json;\nconst approvedChanges = approval.approved_changes || [];\n\nif (approvedChanges.length === 0) {\n  return { status: 'no_changes_approved', message: 'No SEO changes were approved.' };\n}\n\n// Map to API-compatible update payloads\nconst updatePayloads = [];\nconst siteId = $env.SQUARESPACE_SITE_ID;\n\nfor (const change of approvedChanges) {\n  updatePayloads.push({\n    page_id: change.page_id,\n    url: `https://api.squarespace.com/1.0/sites/${siteId}/pages/${change.page_id}`,\n    headers: {\n      'Content-Type': 'application/json',\n      'Authorization': `Bearer ${$env.SQUARESPACE_API_KEY}`\n    },\n    body: {\n      seoData: {\n        seoTitle: change.improved_seo_title,\n        seoDescription: change.improved_meta_description\n      }\n    }\n  });\n}\n\nreturn {\n  status: 'applying',\n  changes_count: updatePayloads.length,\n  update_payloads: updatePayloads,\n  applied_at: new Date().toISOString(),\n  client_id: $env.CLIENT_ID\n};"
+      },
+      "id": "f5a6b7c8-d9e0-1234-fedc-123456780008",
+      "name": "Process SEO Approval",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.squarespace.com/1.0/sites/{{ $env.SQUARESPACE_SITE_ID }}/pages/{{ $json.update_payloads[0].page_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SQUARESPACE_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"seoData\": {\n    \"seoTitle\": \"{{ $json.update_payloads[0].body.seoData.seoTitle }}\",\n    \"seoDescription\": \"{{ $json.update_payloads[0].body.seoData.seoDescription }}\"\n  }\n}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "retryOnFail": {
+            "maxTries": 2,
+            "waitBetweenTries": 3000
+          }
+        }
+      },
+      "id": "f5a6b7c8-d9e0-1234-fedc-123456780009",
+      "name": "Apply SEO Changes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1850, 200]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.LOG_SPREADSHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $env.LOG_SHEET_NAME || 'ExecutionLog' }}",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "schema": [
+            {
+              "id": "col-ts",
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}"
+            },
+            {
+              "id": "col-client",
+              "name": "client_id",
+              "value": "={{ $env.CLIENT_ID }}"
+            },
+            {
+              "id": "col-wf",
+              "name": "workflow",
+              "value": "squarespace-seo"
+            },
+            {
+              "id": "col-action",
+              "name": "action",
+              "value": "={{ $json.status }}"
+            },
+            {
+              "id": "col-score",
+              "name": "avg_seo_score",
+              "value": "={{ $('Analyze SEO Health').item.json.average_seo_score }}"
+            },
+            {
+              "id": "col-pages",
+              "name": "pages_optimized",
+              "value": "={{ $json.changes_count || 0 }}"
+            },
+            {
+              "id": "col-recommendations",
+              "name": "ai_recommendations",
+              "value": "={{ $('Call LLM Router').item.json.response }}"
+            },
+            {
+              "id": "col-provider",
+              "name": "llm_provider",
+              "value": "={{ $('Call LLM Router').item.json.provider }}"
+            },
+            {
+              "id": "col-status",
+              "name": "status",
+              "value": "={{ $json.error ? 'failed' : 'completed' }}"
+            }
+          ]
+        }
+      },
+      "id": "f5a6b7c8-d9e0-1234-fedc-123456780010",
+      "name": "Log to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.9,
+      "position": [2050, 200]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "healthy"
+            },
+            {
+              "name": "message",
+              "value": "All pages have optimal SEO scores. No changes needed this week."
+            }
+          ]
+        }
+      },
+      "id": "f5a6b7c8-d9e0-1234-fedc-123456780011",
+      "name": "Mark SEO Healthy",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1050, 450]
+    }
+  ],
+  "connections": {
+    "Weekly Schedule (Mon 3AM)": {
+      "main": [
+        [
+          {
+            "node": "Fetch Squarespace Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Squarespace Pages": {
+      "main": [
+        [
+          {
+            "node": "Analyze SEO Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze SEO Health": {
+      "main": [
+        [
+          {
+            "node": "Optimization Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Optimization Needed?": {
+      "main": [
+        [
+          {
+            "node": "Build SEO Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark SEO Healthy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build SEO Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call LLM Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call LLM Router": {
+      "main": [
+        [
+          {
+            "node": "Wait for Human Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Human Approval": {
+      "main": [
+        [
+          {
+            "node": "Process SEO Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process SEO Approval": {
+      "main": [
+        [
+          {
+            "node": "Apply SEO Changes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply SEO Changes": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark SEO Healthy": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "saveExecutionProgress": true,
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "versionId": "1.0.0",
+  "active": false
+}

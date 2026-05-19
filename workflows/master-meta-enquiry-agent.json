@@ -1,0 +1,624 @@
+{
+  "name": "Master Meta Enquiry Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "meta-messenger-webhook",
+        "httpMethod": "POST",
+        "responseMode": "lastNode",
+        "options": {
+          "responseData": "allEntries"
+        }
+      },
+      "id": "c2a3d4e5-f6a7-8901-bcde-f12345670001",
+      "name": "Messenger Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "meta-messenger-webhook-{{ $env.CLIENT_ID }}"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Meta Messenger webhook payload\n// Meta sends the webhook as a GET verification first, then POST for messages\nconst data = $input.first().json;\nconst clientId = $env.CLIENT_ID || 'unknown';\n\n// Handle webhook verification (GET request)\nif ($input.first().params && $input.first().params['hub.mode'] === 'subscribe') {\n  const verifyToken = $input.first().params['hub.verify_token'];\n  const challenge = $input.first().params['hub.challenge'];\n  \n  // Verify with your configured token\n  if (verifyToken === ($env.META_WEBHOOK_VERIFY_TOKEN || 'n8n-meta-verify')) {\n    return { verified: true, challenge: parseInt(challenge) };\n  }\n  return { verified: false, error: 'Invalid verify token' };\n}\n\n// Parse message events from the POST body\nconst entries = data.entry || [];\nconst messages = [];\n\nfor (const entry of entries) {\n  const messagingEvents = entry.messaging || [];\n  for (const event of messagingEvents) {\n    const sender = event.sender || {};\n    const recipient = event.recipient || {};\n    const message = event.message || {};\n    const postback = event.postback || {};\n    \n    messages.push({\n      sender_id: sender.id,\n      recipient_id: recipient.id,\n      message_id: message.mid || null,\n      text: message.text || postback.title || postback.payload || '[non-text message]',\n      timestamp: event.timestamp || Date.now(),\n      client_id: clientId,\n      message_type: message.attachments ? 'attachment' : 'text',\n      attachments: message.attachments || []\n    });\n  }\n}\n\nif (messages.length === 0) {\n  return { status: 'no_messages', client_id: clientId };\n}\n\nreturn messages;"
+      },
+      "id": "c2a3d4e5-f6a7-8901-bcde-f12345670002",
+      "name": "Parse Messenger Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "tryToParseNumbers": true
+          },
+          "conditions": [
+            {
+              "id": "cond-triage-001",
+              "leftValue": "={{ $json.text }}",
+              "rightValue": "pricing",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "rules": [
+          {
+            "conditions": {
+              "options": {
+                "caseSensitive": true,
+                "leftValue": "",
+                "typeValidation": "strict",
+                "tryToParseNumbers": true
+              },
+              "conditions": [
+                {
+                  "id": "cond-triage-001",
+                  "leftValue": "={{ $json.text }}",
+                  "rightValue": "pricing",
+                  "operator": {
+                    "type": "string",
+                    "operation": "contains"
+                  }
+                }
+              ],
+              "combinator": "or"
+            }
+          },
+          {
+            "conditions": {
+              "options": {
+                "caseSensitive": true,
+                "leftValue": "",
+                "typeValidation": "strict",
+                "tryToParseNumbers": true
+              },
+              "conditions": [
+                {
+                  "id": "cond-sale-001",
+                  "leftValue": "={{ $json.text }}",
+                  "rightValue": ["buy", "purchase", "order", "interested", "hire", "quote", "estimate"],
+                  "operator": {
+                    "type": "string",
+                    "operation": "containsAny"
+                  }
+                }
+              ],
+              "combinator": "or"
+            }
+          },
+          {
+            "conditions": {
+              "options": {
+                "caseSensitive": false,
+                "leftValue": "",
+                "typeValidation": "strict"
+              },
+              "conditions": [
+                {
+                  "id": "cond-complaint-001",
+                  "leftValue": "={{ $json.text }}",
+                  "rightValue": ["complaint", "angry", "upset", "refund", "bad", "terrible", "worst"],
+                  "operator": {
+                    "type": "string",
+                    "operation": "containsAny"
+                  }
+                }
+              ],
+              "combinator": "or"
+            }
+          }
+        ],
+        "fallbackOutput": "extra"
+      },
+      "id": "c2a3d4e5-f6a7-8901-bcde-f12345670003",
+      "name": "Triage Intent",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "task_type",
+              "value": "routine"
+            },
+            {
+              "name": "response_type",
+              "value": "pricing_inquiry"
+            }
+          ]
+        },
+        "options": {
+          "dotNotation": true
+        }
+      },
+      "id": "c2a3d4e5-f6a7-8901-bcde-f12345670010",
+      "name": "Tag: Pricing",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [850, 100]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "task_type",
+              "value": "routine"
+            },
+            {
+              "name": "response_type",
+              "value": "sales_inquiry"
+            }
+          ]
+        }
+      },
+      "id": "c2a3d4e5-f6a7-8901-bcde-f12345670011",
+      "name": "Tag: Sales",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [850, 280]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "task_type",
+              "value": "routine"
+            },
+            {
+              "name": "response_type",
+              "value": "complaint"
+            }
+          ]
+        }
+      },
+      "id": "c2a3d4e5-f6a7-8901-bcde-f12345670012",
+      "name": "Tag: Complaint",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [850, 460]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "task_type",
+              "value": "routine"
+            },
+            {
+              "name": "response_type",
+              "value": "general"
+            }
+          ]
+        }
+      },
+      "id": "c2a3d4e5-f6a7-8901-bcde-f12345670013",
+      "name": "Tag: General",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [850, 640]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "PLACEHOLDER_LLM_ROUTER_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "c2a3d4e5-f6a7-8901-bcde-f12345670020",
+      "name": "Call LLM Router",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare input for LLM Router sub-workflow\nconst item = $input.first().json;\nconst brandVoice = $env.BRAND_VOICE || 'professional and friendly';\nconst clientName = $env.CLIENT_NAME || 'our team';\n\nlet context = '';\nlet toneGuidance = '';\n\nswitch (item.response_type) {\n  case 'pricing_inquiry':\n    context = 'The user is asking about pricing. Be transparent about cost ranges but encourage them to book a consultation for an exact quote. Include a call to action.';\n    toneGuidance = 'Helpful, transparent, and consultative';\n    break;\n  case 'sales_inquiry':\n    context = 'The user is showing buying intent. Be enthusiastic, highlight key benefits, and guide them toward the next step (booking a call or making a purchase). Include a clear call to action.';\n    toneGuidance = 'Enthusiastic and action-oriented';\n    break;\n  case 'complaint':\n    context = 'The user is unhappy. Be empathetic, apologize sincerely, assure them we take this seriously, and provide a clear path to resolution (human follow-up). Do NOT be defensive.';\n    toneGuidance = 'Empathetic, calm, and solution-focused';\n    break;\n  default:\n    context = 'The user has a general question. Be helpful, warm, and guide them to the right resource or next step.';\n    toneGuidance = 'Warm and helpful';\n}\n\nreturn {\n  task_type: item.task_type || 'routine',\n  user_message: `User message: \"${item.text}\"\\n\\nContext: ${context}\\n\\nTone guidance: ${toneGuidance}. Brand: ${brandVoice}. Sign as ${clientName}.`,\n  context: context,\n  sender_id: item.sender_id,\n  response_type: item.response_type,\n  client_id: item.client_id\n};"
+      },
+      "id": "c2a3d4e5-f6a7-8901-bcde-f12345670021",
+      "name": "Prepare Router Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.response_type }}",
+              "rightValue": "complaint",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "id": "c2a3d4e5-f6a7-8901-bcde-f12345670030",
+      "name": "Needs Human Review?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "resume": "webhook",
+        "options": {
+          "webhookSuffix": "human-approval-{{ $json.sender_id }}",
+          "responseMode": "responseNode",
+          "responseData": "allEntries"
+        }
+      },
+      "id": "c2a3d4e5-f6a7-8901-bcde-f12345670040",
+      "name": "Wait for Human Approval",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1450, 150]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v20.0/me/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{ $env.META_PAGE_ACCESS_TOKEN }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"recipient\": {\n    \"id\": \"{{ $('Prepare Router Input').item.json.sender_id }}\"\n  },\n  \"message\": {\n    \"text\": \"{{ $json.response }}\"\n  },\n  \"messaging_type\": \"RESPONSE\"\n}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "retryOnFail": {
+            "maxTries": 3,
+            "waitBetweenTries": 3000
+          }
+        }
+      },
+      "id": "c2a3d4e5-f6a7-8901-bcde-f12345670050",
+      "name": "Send Messenger Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1650, 300]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.LOG_SPREADSHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $env.LOG_SHEET_NAME || 'ExecutionLog' }}",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "col-timestamp",
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}"
+            },
+            {
+              "id": "col-client",
+              "name": "client_id",
+              "value": "={{ $env.CLIENT_ID }}"
+            },
+            {
+              "id": "col-workflow",
+              "name": "workflow",
+              "value": "meta-enquiry-agent"
+            },
+            {
+              "id": "col-sender",
+              "name": "sender_id",
+              "value": "={{ $('Prepare Router Input').item.json.sender_id }}"
+            },
+            {
+              "id": "col-response-type",
+              "name": "response_type",
+              "value": "={{ $('Prepare Router Input').item.json.response_type }}"
+            },
+            {
+              "id": "col-user-msg",
+              "name": "user_message",
+              "value": "={{ $('Parse Messenger Payload').item.json.text }}"
+            },
+            {
+              "id": "col-ai-response",
+              "name": "ai_response",
+              "value": "={{ $json.response }}"
+            },
+            {
+              "id": "col-provider",
+              "name": "llm_provider",
+              "value": "={{ $json.provider }}"
+            },
+            {
+              "id": "col-tokens",
+              "name": "tokens_used",
+              "value": "={{ $json.tokens_used }}"
+            },
+            {
+              "id": "col-cost",
+              "name": "cost_estimate",
+              "value": "={{ $json.cost_estimate }}"
+            },
+            {
+              "id": "col-status",
+              "name": "status",
+              "value": "sent"
+            }
+          ]
+        }
+      },
+      "id": "c2a3d4e5-f6a7-8901-bcde-f12345670060",
+      "name": "Log to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.9,
+      "position": [1850, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "jsonBody": {
+          "values": {
+            "string": [
+              {
+                "name": "status",
+                "value": "={{ $json.success ? 'replied' : 'error' }}"
+              },
+              {
+                "name": "sender_id",
+                "value": "={{ $('Prepare Router Input').item.json.sender_id }}"
+              },
+              {
+                "name": "provider",
+                "value": "={{ $json.provider }}"
+              },
+              {
+                "name": "response_type",
+                "value": "={{ $('Prepare Router Input').item.json.response_type }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "c2a3d4e5-f6a7-8901-bcde-f12345670090",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2050, 300]
+    }
+  ],
+  "connections": {
+    "Messenger Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Messenger Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Messenger Payload": {
+      "main": [
+        [
+          {
+            "node": "Triage Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Triage Intent": {
+      "main": [
+        [
+          {
+            "node": "Tag: Pricing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tag: Sales",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tag: Complaint",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tag: General",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag: Pricing": {
+      "main": [
+        [
+          {
+            "node": "Prepare Router Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag: Sales": {
+      "main": [
+        [
+          {
+            "node": "Prepare Router Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag: Complaint": {
+      "main": [
+        [
+          {
+            "node": "Prepare Router Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag: General": {
+      "main": [
+        [
+          {
+            "node": "Prepare Router Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Router Input": {
+      "main": [
+        [
+          {
+            "node": "Call LLM Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call LLM Router": {
+      "main": [
+        [
+          {
+            "node": "Needs Human Review?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Human Review?": {
+      "main": [
+        [
+          {
+            "node": "Wait for Human Approval",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Messenger Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Human Approval": {
+      "main": [
+        [
+          {
+            "node": "Send Messenger Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Messenger Reply": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "saveExecutionProgress": true,
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "versionId": "1.0.0",
+  "active": false
+}

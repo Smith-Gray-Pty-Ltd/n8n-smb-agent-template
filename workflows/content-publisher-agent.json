@@ -1,0 +1,359 @@
+{
+  "name": "Content Publisher Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "intervalSize": 1,
+          "typeInterval": "hours",
+          "intervalTrigger": {
+            "timezone": "={{ $env.TZ || 'Australia/Sydney' }}",
+            "hour": 9
+          }
+        }
+      },
+      "id": "d3a4e5f6-a7b8-9012-cdef-123456780001",
+      "name": "Daily Schedule (9AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.facebook.com/v20.0/{{ $env.META_PAGE_ACCESS_TOKEN ? 'me/feed?fields=id,message,created_time,permalink_url,shares,reactions.summary(true),comments.summary(true)' : 'me/posts?fields=id,message,created_time' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{ $env.META_PAGE_ACCESS_TOKEN }}"
+            },
+            {
+              "name": "limit",
+              "value": "10"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "d3a4e5f6-a7b8-9012-cdef-123456780002",
+      "name": "Fetch Recent Posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Analyze recent post performance and suggest content\nconst posts = $input.first().json.data || [];\nconst brandVoice = $env.BRAND_VOICE || 'professional';\nconst clientName = $env.CLIENT_NAME || 'our brand';\n\n// Calculate average engagement\nlet totalReactions = 0;\nlet totalComments = 0;\nlet totalShares = 0;\nlet topPost = null;\nlet topEngagement = 0;\n\nfor (const post of posts) {\n  const reactions = post.reactions?.summary?.total_count || 0;\n  const comments = post.comments?.summary?.total_count || 0;\n  const shares = post.shares?.count || 0;\n  const engagement = reactions + comments * 2 + shares * 3;\n\n  totalReactions += reactions;\n  totalComments += comments;\n  totalShares += shares;\n\n  if (engagement > topEngagement) {\n    topEngagement = engagement;\n    topPost = post;\n  }\n}\n\nconst avgEngagement = posts.length > 0 ? (totalReactions + totalComments + totalShares) / posts.length : 0;\n\nreturn {\n  post_count: posts.length,\n  avg_engagement: Math.round(avgEngagement),\n  top_post_message: topPost?.message?.substring(0, 200) || 'none',\n  top_post_url: topPost?.permalink_url || 'none',\n  top_post_created: topPost?.created_time || 'none',\n  client_name: clientName,\n  brand_voice: brandVoice,\n  task_type: 'routine'\n};"
+      },
+      "id": "d3a4e5f6-a7b8-9012-cdef-123456780003",
+      "name": "Analyze Performance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate content suggestion based on past performance\nconst data = $input.first().json;\n\nconst prompt = `You are a social media content strategist for ${data.client_name}. Brand voice: ${data.brand_voice}.\n\nRecent post performance:\n- ${data.post_count} recent posts analyzed\n- Average engagement: ${data.avg_engagement}\n- Top performing post: \"${data.top_post_message}\"\n\nBased on what worked well, suggest one new post (max 280 chars) that would perform well. Include a suggested best posting time and 2-3 relevant hashtags. The post should match the brand voice exactly.\n\nRespond in JSON format:\n{\n  \"post_text\": \"the suggested post\",\n  \"suggested_time\": \"e.g., 12:00 PM\",\n  \"hashtags\": [\"tag1\", \"tag2\", \"tag3\"],\n  \"rationale\": \"why this post should work well\"\n}`;\n\nreturn {\n  task_type: 'routine',\n  user_message: prompt,\n  context: 'Social media content strategy based on page performance analytics'\n};"
+      },
+      "id": "d3a4e5f6-a7b8-9012-cdef-123456780004",
+      "name": "Build Content Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "PLACEHOLDER_LLM_ROUTER_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "d3a4e5f6-a7b8-9012-cdef-123456780005",
+      "name": "Call LLM Router",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "resume": "webhook",
+        "options": {
+          "webhookSuffix": "content-approval-{{ $now.format('YYYY-MM-DD') }}"
+        }
+      },
+      "id": "d3a4e5f6-a7b8-9012-cdef-123456780006",
+      "name": "Wait for Approval",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{ $env.META_PAGE_ACCESS_TOKEN ? 'me/feed' : 'me/feed' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{ $env.META_PAGE_ACCESS_TOKEN }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $('Call LLM Router').item.json.response }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "retryOnFail": {
+            "maxTries": 3,
+            "waitBetweenTries": 5000
+          }
+        }
+      },
+      "id": "d3a4e5f6-a7b8-9012-cdef-123456780007",
+      "name": "Publish to Facebook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1450, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{ $env.META_INSTAGRAM_ACCOUNT_ID || 'me' }}/media",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{ $env.META_PAGE_ACCESS_TOKEN }}"
+            },
+            {
+              "name": "caption",
+              "value": "={{ $('Call LLM Router').item.json.response }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "retryOnFail": {
+            "maxTries": 2,
+            "waitBetweenTries": 3000
+          }
+        }
+      },
+      "id": "d3a4e5f6-a7b8-9012-cdef-123456780008",
+      "name": "Publish to Instagram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1450, 450]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.LOG_SPREADSHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $env.LOG_SHEET_NAME || 'ExecutionLog' }}",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "schema": [
+            {
+              "id": "col-ts",
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}"
+            },
+            {
+              "id": "col-cid",
+              "name": "client_id",
+              "value": "={{ $env.CLIENT_ID }}"
+            },
+            {
+              "id": "col-wf",
+              "name": "workflow",
+              "value": "content-publisher"
+            },
+            {
+              "id": "col-action",
+              "name": "action",
+              "value": "publish"
+            },
+            {
+              "id": "col-content",
+              "name": "content",
+              "value": "={{ $('Call LLM Router').item.json.response }}"
+            },
+            {
+              "id": "col-provider",
+              "name": "llm_provider",
+              "value": "={{ $('Call LLM Router').item.json.provider }}"
+            },
+            {
+              "id": "col-fb-id",
+              "name": "fb_post_id",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "id": "col-status",
+              "name": "status",
+              "value": "={{ $json.error ? 'failed' : 'published' }}"
+            }
+          ]
+        }
+      },
+      "id": "d3a4e5f6-a7b8-9012-cdef-123456780009",
+      "name": "Log to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.9,
+      "position": [1650, 300]
+    }
+  ],
+  "connections": {
+    "Daily Schedule (9AM)": {
+      "main": [
+        [
+          {
+            "node": "Fetch Recent Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Recent Posts": {
+      "main": [
+        [
+          {
+            "node": "Analyze Performance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Performance": {
+      "main": [
+        [
+          {
+            "node": "Build Content Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Content Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call LLM Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call LLM Router": {
+      "main": [
+        [
+          {
+            "node": "Wait for Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Approval": {
+      "main": [
+        [
+          {
+            "node": "Publish to Facebook",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Publish to Instagram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish to Facebook": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish to Instagram": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "saveExecutionProgress": true,
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "versionId": "1.0.0",
+  "active": false
+}
