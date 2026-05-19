@@ -1,0 +1,100 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  json-validate:
+    name: Validate JSON Workflows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate all workflow JSON files
+        run: |
+          echo "Checking workflow JSON files..."
+          FAIL=0
+          for f in workflows/*.json; do
+            if python3 -c "import json; json.load(open('$f'))" 2>/dev/null; then
+              echo "  OK: $f"
+            else
+              echo "  FAIL: $f is not valid JSON"
+              FAIL=1
+            fi
+          done
+          if [ "$FAIL" -ne 0 ]; then
+            echo "::error::One or more workflow JSON files are invalid"
+            exit 1
+          fi
+          echo "All workflow JSONs are valid."
+
+  env-check:
+    name: Check .env.example
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify .env.example exists and has required keys
+        run: |
+          REQUIRED_KEYS=(
+            "N8N_ENCRYPTION_KEY"
+            "N8N_HOST"
+            "CLIENT_ID"
+            "BRAND_VOICE"
+            "DB_PASSWORD"
+            "REDIS_PASSWORD"
+            "N8N_VERSION"
+          )
+          for key in "${REQUIRED_KEYS[@]}"; do
+            if ! grep -q "^${key}=" .env.example; then
+              echo "::error::Required key '$key' missing from .env.example"
+              exit 1
+            fi
+          done
+          echo "All required keys present in .env.example"
+
+      - name: Check .env.example has no real secrets
+        run: |
+          if grep -qiE "(sk-ant-|[0-9a-f]{32}|EAA[A-Za-z0-9]{100,})" .env.example; then
+            echo "::warning::.env.example may contain placeholder keys that look like real secrets. Please review."
+          fi
+          echo ".env.example looks clean."
+
+  yaml-lint:
+    name: Lint docker-compose.yml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Basic YAML structure check
+        run: |
+          python3 -c "
+          import yaml
+          with open('docker-compose.yml') as f:
+              data = yaml.safe_load(f)
+          services = data.get('services', {})
+          print(f'Found {len(services)} services: {list(services.keys())}')
+          assert 'n8n' in services, 'n8n service missing'
+          assert 'postgres' in services, 'postgres service missing'
+          assert 'redis' in services, 'redis service missing'
+          print('docker-compose.yml structure looks valid.')
+          "
+
+      - name: Verify restart policies
+        run: |
+          python3 -c "
+          import yaml
+          with open('docker-compose.yml') as f:
+              data = yaml.safe_load(f)
+          for name, svc in data.get('services', {}).items():
+              restart = svc.get('restart', 'none')
+              if restart != 'unless-stopped':
+                  print(f'::warning::Service {name} has restart={restart} (recommended: unless-stopped)')
+              else:
+                  print(f'OK: {name} restart={restart}')
+          print('Restart policy check complete.')
+          "

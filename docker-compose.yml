@@ -7,6 +7,9 @@
 # OrbStack users: extra_hosts already configured for
 # host.docker.internal → host-gateway (for local Ollama).
 # No additional config needed — just `docker compose up -d`.
+#
+# Image versioning: set N8N_VERSION in .env to pin (e.g. 1.91.0).
+# Omit or set to "latest" for local dev.
 # ─────────────────────────────────────────────────────────────
 
 version: "3.9"
@@ -15,28 +18,37 @@ services:
   # ─── Postgres — primary database ───────────────────────
   postgres:
     image: postgres:16-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-n8n-smb}-postgres
     restart: unless-stopped
+    labels:
+      - "app=n8n-smb"
+      - "component=database"
+      - "tier=backend"
     environment:
       POSTGRES_USER: ${DB_USER:-n8n}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
       POSTGRES_DB: ${DB_NAME:-n8n}
     volumes:
-      # On VPS: this volume should be backed up regularly.
-      #   docker run --rm -v n8n-smb-agent-template_postgres_data:/data -v $(pwd):/backup alpine tar czf /backup/postgres-backup.tar.gz -C /data .
+      # On VPS: back up this volume regularly.
+      # docker run --rm -v ${COMPOSE_PROJECT_NAME:-n8n-smb}_postgres_data:/data -v $(pwd):/backup alpine tar czf /backup/postgres-backup.tar.gz -C /data .
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-n8n} -d ${DB_NAME:-n8n}"]
       interval: 10s
       timeout: 5s
       retries: 5
-    # OrbStack: networks auto-resolve. No special config needed.
     networks:
       - n8n_net
 
   # ─── Redis — queue backend ─────────────────────────────
   redis:
     image: redis:7-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-n8n-smb}-redis
     restart: unless-stopped
+    labels:
+      - "app=n8n-smb"
+      - "component=cache"
+      - "tier=backend"
     command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-changeme}
     volumes:
       - redis_data:/data
@@ -48,13 +60,16 @@ services:
     networks:
       - n8n_net
 
-  # ─── n8n Main (API + Editor + Webhook) ────────────────
+  # ─── n8n Main (API + Editor + Webhooks) ───────────────
   n8n:
-    # Pin a specific version for production stability.
-    # Set N8N_VERSION in .env  e.g.  N8N_VERSION=1.91.0
-    # Omit or set to "latest" for local dev.
     image: n8nio/n8n:${N8N_VERSION:-latest}
+    container_name: ${COMPOSE_PROJECT_NAME:-n8n-smb}-n8n
     restart: unless-stopped
+    labels:
+      - "app=n8n-smb"
+      - "component=application"
+      - "tier=frontend"
+      - "role=main"
     ports:
       - "${N8N_PORT:-5678}:5678"
     environment:
@@ -112,7 +127,7 @@ services:
       # ── Squarespace ──
       - SQUARESPACE_API_KEY=${SQUARESPACE_API_KEY}
       - SQUARESPACE_SITE_ID=${SQUARESPACE_SITE_ID}
-      # ── LLM — Ollama (local or cloud) ──
+      # ── LLM — Ollama ──
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OLLAMA_CLOUD_URL=${OLLAMA_CLOUD_URL}
       - OLLAMA_CLOUD_API_KEY=${OLLAMA_CLOUD_API_KEY}
@@ -137,7 +152,6 @@ services:
       - DOMAIN=${DOMAIN}
     volumes:
       - n8n_data:/home/node/.n8n
-      # Mount workflows for easy import/export
       - ./workflows:/home/node/.n8n/workflows-backup:ro
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:5678/healthz || exit 1"]
@@ -150,24 +164,34 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # OrbStack: host-gateway resolves to macOS host.
-    # Falls through to host.docker.internal in Docker Desktop.
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
       - n8n_net
-    # ── Traefik labels (uncomment for Hostinger reverse-proxy) ──
+    # ── Traefik v2 labels — uncomment for reverse-proxy on Hostinger VPS
     # labels:
     #   - "traefik.enable=true"
+    #   - "traefik.docker.network=n8n_net"
     #   - "traefik.http.routers.n8n.rule=Host(`${N8N_HOST}`)"
     #   - "traefik.http.routers.n8n.entrypoints=websecure"
     #   - "traefik.http.routers.n8n.tls.certresolver=letsencrypt"
+    #   - "traefik.http.routers.n8n.middlewares=n8n-headers"
+    #   - "traefik.http.middlewares.n8n-headers.headers.customrequestheaders.X-Frame-Options=DENY"
     #   - "traefik.http.services.n8n.loadbalancer.server.port=5678"
+    #   - "traefik.http.services.n8n.loadbalancer.healthcheck.path=/healthz"
+    #   - "traefik.http.services.n8n.loadbalancer.healthcheck.interval=30s"
+    #   - "com.centurylinklabs.watchtower.enable=true"
 
   # ─── n8n Worker (queue mode) ──────────────────────────
   n8n-worker:
     image: n8nio/n8n:${N8N_VERSION:-latest}
+    container_name: ${COMPOSE_PROJECT_NAME:-n8n-smb}-worker
     restart: unless-stopped
+    labels:
+      - "app=n8n-smb"
+      - "component=worker"
+      - "tier=backend"
+      - "role=worker"
     command: worker
     environment:
       - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
@@ -184,7 +208,7 @@ services:
       - QUEUE_BULL_REDIS_DB=0
       - EXECUTIONS_MODE=queue
       - GENERIC_TIMEZONE=${TZ:-Australia/Sydney}
-      # Pass through all client/LLM vars workers need for API calls
+      # Worker needs all client/LLM vars for API calls
       - CLIENT_ID=${CLIENT_ID:-default}
       - BRAND_VOICE=${BRAND_VOICE:-professional and friendly}
       - META_APP_ID=${META_APP_ID}
@@ -228,11 +252,12 @@ services:
 networks:
   n8n_net:
     driver: bridge
+    name: ${COMPOSE_PROJECT_NAME:-n8n-smb}_net
 
 volumes:
-  # Named volumes for easy backup/restore:
-  #   Backup: docker run --rm -v [volume]:/data -v $(pwd):/backup alpine tar czf /backup/[name]-backup.tar.gz -C /data .
-  #   Restore: docker run --rm -v [volume]:/data -v $(pwd):/backup alpine tar xzf /backup/[name]-backup.tar.gz -C /data
+  # Named volumes with COMPOSE_PROJECT_NAME prefix for multi-client isolation.
+  # Backup:  docker run --rm -v [name]:/data -v $(pwd):/backup alpine tar czf /backup/[name].tar.gz -C /data .
+  # Restore: docker run --rm -v [name]:/data -v $(pwd):/backup alpine tar xzf /backup/[name].tar.gz -C /data
   postgres_data:
     name: ${COMPOSE_PROJECT_NAME:-n8n-smb}_postgres_data
   redis_data:
