@@ -1,8 +1,30 @@
+# Environment (contains secrets)
 .env
+
+# Data directories
 n8n_data/
 postgres_data/
 redis_data/
+backups/
+
+# Dependencies
 node_modules/
+
+# Logs
 *.log
+
+# OS files
 .DS_Store
 Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Docker
+*.tar.gz
+!workflows/*.json
+
+# Script output
+*.bak
+*.tmp
